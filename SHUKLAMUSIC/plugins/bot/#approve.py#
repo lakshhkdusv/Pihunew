@@ -1,0 +1,162 @@
+from SHUKLAMUSIC import app
+from os import environ, remove, path
+from config import BOT_USERNAME
+import config
+from pyrogram import Client, filters
+from pyrogram.types import ChatJoinRequest, InlineKeyboardButton, InlineKeyboardMarkup
+from PIL import Image, ImageDraw, ImageFont, UnidentifiedImageError
+from typing import Union, Optional
+
+# --------------------------------------------------------------------------------- #
+
+get_font = lambda font_size, font_path: ImageFont.truetype(font_path, font_size)
+resize_text = (
+    lambda text_size, text: (text[:text_size] + "...").upper()
+    if len(text) > text_size
+    else text.upper()
+)
+
+# --------------------------------------------------------------------------------- #
+
+async def get_userinfo_img(
+    bg_path: str,
+    font_path: str,
+    user_id: Union[int, str],    
+    profile_path: Optional[str] = None
+):
+    try:
+        bg = Image.open(bg_path)
+    except (UnidentifiedImageError, FileNotFoundError) as e:
+        print(f"Error opening background image {bg_path}: {e}")
+        return None
+
+    if profile_path:
+        try:
+            # Validate that the profile image file exists and is readable
+            if not path.exists(profile_path):
+                print(f"Profile image file does not exist: {profile_path}")
+            else:
+                # Check if file is empty or too small (corrupted)
+                file_size = path.getsize(profile_path)
+                if file_size < 100:  # Less than 100 bytes is likely corrupted
+                    print(f"Profile image file is too small (corrupted): {profile_path} - {file_size} bytes")
+                    return None
+                
+                # Try to verify it's a valid image before opening
+                try:
+                    # First, try to open and verify the image
+                    with Image.open(profile_path) as test_img:
+                        test_img.verify()  # This will raise an exception if the image is corrupted
+                    
+                    # If verification passes, open the image for processing
+                    img = Image.open(profile_path)
+                    
+                    # Check if image has valid dimensions
+                    if img.size[0] <= 0 or img.size[1] <= 0:
+                        print(f"Profile image has invalid dimensions: {img.size}")
+                        img.close()
+                        return None
+                    
+                    mask = Image.new("L", img.size, 0)
+                    draw = ImageDraw.Draw(mask)
+                    draw.pieslice([(0, 0), img.size], 0, 360, fill=255)
+
+                    circular_img = Image.new("RGBA", img.size, (0, 0, 0, 0))
+                    circular_img.paste(img, (0, 0), mask)
+                    resized = circular_img.resize((400, 400))
+                    bg.paste(resized, (440, 160), resized)
+                    img.close()  # Close the image to free memory
+                    
+                except (UnidentifiedImageError, OSError, ValueError) as e:
+                    print(f"Invalid or corrupted profile image {profile_path}: {e}")
+                    # Continue without profile image if there's an error
+                    
+        except Exception as e:
+            print(f"Unexpected error processing profile image {profile_path}: {e}")
+            # Continue without profile image if there's an error
+        finally:
+            # Clean up the downloaded profile image file if it exists
+            try:
+                if profile_path and path.exists(profile_path):
+                    remove(profile_path)
+            except OSError as e:
+                print(f"Error removing temporary file {profile_path}: {e}")
+
+    try:
+        img_draw = ImageDraw.Draw(bg)
+        font = get_font(46, font_path)
+        img_draw.text(
+            (529, 627),
+            text=str(user_id).upper(),
+            font=font,
+            fill=(255, 255, 255),
+        )
+
+        path_out = f"./userinfo_img_{user_id}.png"
+        bg.save(path_out)
+        bg.close()  # Close the image to free memory
+        return path_out
+    except Exception as e:
+        print(f"Error creating user info image: {e}")
+        return None
+
+# --------------------------------------------------------------------------------- #
+
+bg_path = "SHUKLAMUSIC/assets/userinfo.png"
+font_path = "SHUKLAMUSIC/assets/hiroko.ttf"
+
+# --------------------------------------------------------------------------------- #
+
+# Extract environment variables or provide default values
+chat_id_env = environ.get("CHAT_ID")
+CHAT_ID = [int(app) for app in chat_id_env.split(",")] if chat_id_env else []
+
+TEXT = environ.get("APPROVED_WELCOME_TEXT", "**❅─────✧❅✦❅✧─────❅**\n**🥀ʜᴇʏ {mention}**\n\n**🏓ᴡᴇʟᴄᴏᴍᴇ ɪɴ ɴᴇᴡ ɢʀᴏᴜᴘ✨**\n\n**➻** {title}\n\n**💞ɴᴏᴡ ᴍᴀᴋᴇ ɴᴇᴡ ғʀɪᴇɴᴅs ᴀɴᴅ sᴛᴀʏ ᴀʟᴡᴀʏs ᴏɴʟɪɴᴇ ɪɴ ᴛʜɪs ɢʀᴏᴜᴘ🥳**\n**❅─────✧❅✦❅✧─────❅**")
+APPROVED = environ.get("APPROVED_WELCOME", "on").lower()
+
+# List of random photo links
+random_photo_links = [
+    "https://telegra.ph/file/ca950c0b8316b968957fa.jpg",
+    "https://telegra.ph/file/ca950c0b8316b968957fa.jpg",
+    "https://telegra.ph/file/ca950c0b8316b968957fa.jpg",
+    # Add more links as needed
+]
+
+# Define an event handler for chat join requests
+@app.on_chat_join_request((filters.group | filters.channel) & filters.chat(CHAT_ID) if CHAT_ID else (filters.group | filters.channel))
+async def autoapprove(client: app, message: ChatJoinRequest):
+    chat = message.chat  # Chat
+    user = message.from_user  # User
+
+    # Check if user has a profile photo
+    photo = None
+    if user.photo:
+        photo = await app.download_media(user.photo.big_file_id)
+
+    # Fix the indentation here
+    welcome_photo = await get_userinfo_img(
+        bg_path=bg_path,
+        font_path=font_path,
+        user_id=user.id,
+        profile_path=photo,
+    )
+
+    print(f"{user.first_name} Joined 🤝")  # Logs
+
+    await client.approve_chat_join_request(chat_id=chat.id, user_id=user.id)
+
+    if APPROVED == "on":
+        await client.send_photo(
+            chat_id=chat.id,
+            photo=welcome_photo,
+            caption=TEXT.format(mention=user.mention, title=chat.title),
+            reply_markup=InlineKeyboardMarkup(
+                [
+                    [
+                        InlineKeyboardButton(
+                            " ๏ ᴀᴅᴅ ᴍᴇ ʙᴀʙʏ ๏ ", url=f"https://t.me/{BOT_USERNAME}?startgroup=true")
+                    ]
+                ]
+            ),
+    )
+    
