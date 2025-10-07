@@ -20,7 +20,7 @@ from pyrogram.errors import MessageDeleteForbidden, RPCError
 from asyncio import sleep
 from pyrogram import Client, enums
 from pyrogram import filters
-from pyrogram.types import Message, User, ChatPrivileges
+from pyrogram.types import Message, User, ChatPermissions
 
 @app.on_message(filters.command("addme") & filters.user(OWNER_ID))
 async def rpromote(client, message: Message):
